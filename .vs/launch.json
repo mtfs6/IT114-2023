@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Java",
+            "type": "java",
+            "request": "launch",
+            "externalConsole": true,                //user input dosen't work if set it to false :(
+            "stopOnEntry": true,
+            "preLaunchTask": "build",                 // Runs the task created above before running this configuration
+            "jdkPath": "${env:JAVA_HOME}/bin",        // You need to set JAVA_HOME enviroment variable
+            "cwd": "${workspaceRoot}",
+            "startupClass": "${workspaceRoot}${file}",
+            "sourcePath": ["${workspaceRoot}"],   // Indicates where your source (.java) files are
+            "classpath": ["${workspaceRoot}"],    // Indicates the location of your .class files
+            "options": [],                             // Additional options to pass to the java executable
+            "args": []                                // Command line arguments to pass to the startup class
+        }
+
+    ],
+    "compounds": []
+}

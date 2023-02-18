@@ -21,8 +21,16 @@ public class Problem3 {
         //TODO convert each value to positive
         //set the result to the proper index of the output array
         //hint: don't forget to handle the data types properly
-        
-        //end edit section
+        for(int i = 0 ; i < arr.length ; i++)
+        {
+           if(arr.getClass().getSimpleName().toString().equals("String[]"))
+            output[i] =  arr[i].toString().replace("-", "");
+            if(arr.getClass().getSimpleName().toString().equals("Double[]"))
+            output[i] =  Math.abs(Double.parseDouble(arr[i].toString()));
+            if(arr.getClass().getSimpleName().toString().equals("Integer[]"))
+            output[i] =  Math.abs(Integer.parseInt(arr[i].toString()));
+            
+        }        //end edit section
 
         StringBuilder sb = new StringBuilder();
         for(Object i : output){
