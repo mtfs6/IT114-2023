@@ -1,431 +1,52 @@
-package Module4.Part3;
-
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.Socket;
-import java.net.UnknownHostException;
-import java.util.Scanner;
-
-public class Client {
-
-    Socket server = null;
-    ObjectOutputStream out = null;
-    ObjectInputStream in = null;
-    final String ipAddressPattern = "connect\\s+(\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}:\\d{3,5})";
-    final String localhostPattern = "connect\\s+(localhost:\\d{3,5})";
-    boolean isRunning = false;
-    private Thread inputThread;
-    private Thread fromServerThread;
-
-    public Client() {
-        System.out.println("");
-    }
-
-    public boolean isConnected() {
-        if (server == null) {
-            return false;
-        }
-        // https://stackoverflow.com/a/10241044
-        // Note: these check the client's end of the socket connect; therefore they
-        // don't really help determine
-        // if the server had a problem
-        return server.isConnected() && !server.isClosed() && !server.isInputShutdown() && !server.isOutputShutdown();
-
-    }
-
-    /**
-     * Takes an ip address and a port to attempt a socket connection to a server.
-     * 
-     * @param address
-     * @param port
-     * @return true if connection was successful
-     */
-    private boolean connect(String address, int port) {
-        try {
-            server = new Socket(address, port);
-            // channel to send to server
-            out = new ObjectOutputStream(server.getOutputStream());
-            // channel to listen to server
-            in = new ObjectInputStream(server.getInputStream());
-            System.out.println("Client connected");
-            listenForServerMessage();
-        } catch (UnknownHostException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return isConnected();
-    }
-
-    /**
-     * <p>
-     * Check if the string contains the <i>connect</i> command
-     * followed by an ip address and port or localhost and port.
-     * </p>
-     * <p>
-     * Example format: 123.123.123:3000
-     * </p>
-     * <p>
-     * Example format: localhost:3000
-     * </p>
-     * https://www.w3schools.com/java/java_regex.asp
-     * 
-     * @param text
-     * @return
-     */
-    private boolean isConnection(String text) {
-        // https://www.w3schools.com/java/java_regex.asp
-        return text.matches(ipAddressPattern)
-                || text.matches(localhostPattern);
-    }
-
-    private boolean isQuit(String text) {
-        return text.equalsIgnoreCase("quit");
-    }
-
-    /**
-     * Controller for handling various text commands.
-     * <p>
-     * Add more here as needed
-     * </p>
-     * 
-     * @param text
-     * @return true if a text was a command or triggered a command
-     */
-    private boolean processCommand(String text) {
-        if (isConnection(text)) {
-            // replaces multiple spaces with single space
-            // splits on the space after connect (gives us host and port)
-            // splits on : to get host as index 0 and port as index 1
-            String[] parts = text.trim().replaceAll(" +", " ").split(" ")[1].split(":");
-            connect(parts[0].trim(), Integer.parseInt(parts[1].trim()));
-            return true;
-        } else if (isQuit(text)) {
-            isRunning = false;
-            return true;
-        }
-        return false;
-    }
-
-    private void listenForKeyboard() {
-        inputThread = new Thread() {
-            @Override
-            public void run() {
-                System.out.println("Listening for input");
-                try (Scanner si = new Scanner(System.in);) {
-                    String line = "";
-                    isRunning = true;
-                    while (isRunning) {
-                        try {
-                            System.out.println("Waiting for input");
-                            line = si.nextLine();
-                            if (!processCommand(line)) {
-                                if (isConnected()) {
-                                    out.writeObject(line);
-
-                                } else {
-                                    System.out.println("Not connected to server");
-                                }
-                            }
-                        } catch (Exception e) {
-                            System.out.println("Connection dropped");
-                            break;
-                        }
-                    }
-                    System.out.println("Exited loop");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                } finally {
-                    close();
-                }
-            }
-        };
-        inputThread.start();
-    }
-
-    private void listenForServerMessage() {
-        fromServerThread = new Thread() {
-            @Override
-            public void run() {
-                try {
-                    String fromServer;
-
-                    // while we're connected, listen for strings from server
-                    while (!server.isClosed() && !server.isInputShutdown()
-                            && (fromServer = (String) in.readObject().toString()) != null) {
-
-                        System.out.println(fromServer);
-                    }
-                    System.out.println("Loop exited");
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    if (!server.isClosed()) {
-                        System.out.println("Server closed connection");
-                    } else {
-                        System.out.println("Connection closed");
-                    }
-                } finally {
-                    close();
-                    System.out.println("Stopped listening to server input");
-                }
-            }
-        };
-        fromServerThread.start();// start the thread
-
-    }
-
-    public void start() throws IOException {
-        listenForKeyboard();
-    }
-
-    private void close() {
-        try {
-            inputThread.interrupt();
-        } catch (Exception e) {
-            System.out.println("Error interrupting input");
-            e.printStackTrace();
-        }
-        try {
-            fromServerThread.interrupt();
-        } catch (Exception e) {
-            System.out.println("Error interrupting listener");
-            e.printStackTrace();
-        }
-        try {
-            System.out.println("Closing output stream");
-            out.close();
-        } catch (NullPointerException ne) {
-            System.out.println("Server was never opened so this exception is ok");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        try {
-            System.out.println("Closing input stream");
-            in.close();
-        } catch (NullPointerException ne) {
-            System.out.println("Server was never opened so this exception is ok");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        try {
-            System.out.println("Closing connection");
-            server.close();
-            System.out.println("Closed socket");
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (NullPointerException ne) {
-            System.out.println("Server was never opened so this exception is ok");
-        }
-    }
-
-    public static void main(String[] args) {
-        Client client = new Client();
-
-        try {
-            // if start is private, it's valid here since this main is part of the class
-            client.start();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-}
-
-package Module4.Part3;
-
-import java.io.IOException;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-
-public class Server {
-    int port = 3001;
-    // connected clients
-    private List<ServerThread> clients = new ArrayList<ServerThread>();
-
-    private void start(int port) {
-        this.port = port;
-        // server listening
-        try (ServerSocket serverSocket = new ServerSocket(port);) {
-            Socket incoming_client = null;
-            // System.out.println("Server is listening on port " + port);
-            System.out.println("This is Number Guessing Game ");
-            do {
-                System.out.println("waiting for next client");
-
-                if (incoming_client != null) {
-                    System.out.println("Client connected");
-
-                    ServerThread sClient = new ServerThread(incoming_client, this);
-
-                    clients.add(sClient);
-                    sClient.start();
-                    incoming_client = null;
-
-                }
-            } while ((incoming_client = serverSocket.accept()) != null);
-        } catch (IOException e) {
-            System.err.println("Error accepting connection");
-            e.printStackTrace();
-        } finally {
-            System.out.println("closing server socket");
-        }
-    }
-
-    protected synchronized void disconnect(ServerThread client) {
-        long id = client.getId();
-        client.disconnect();
-        broadcast("Disconnected", id);
-    }
-
-    protected synchronized void broadcast(String message, long id) {
-        if (processCommand(message, id)) {
-
-            return;
-        }
-        // let's temporarily use the thread id as the client identifier to
-        // show in all client's chat. This isn't good practice since it's subject to
-        // change as clients connect/disconnect
-        message = String.format("User[%d]: %s", id, message);
-        // end temp identifier
-
-        // loop over clients and send out the message
-        Iterator<ServerThread> it = clients.iterator();
-        while (it.hasNext()) {
-            ServerThread client = it.next();
-            boolean wasSuccessful = client.send(message);
-            if (!wasSuccessful) {
-                System.out.println(String.format("Removing disconnected client[%s] from list", client.getId()));
-                it.remove();
-                broadcast("Disconnected", id);
-            }
-        }
-    }
-
-    private boolean processCommand(String message, long clientId) {
-        System.out.println("Checking command: " + message);
-        if (message.equalsIgnoreCase("disconnect")) {
-            Iterator<ServerThread> it = clients.iterator();
-            while (it.hasNext()) {
-                ServerThread client = it.next();
-                if (client.getId() == clientId) {
-                    it.remove();
-                    disconnect(client);
-
-                    break;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    public static void main(String[] args) {
-        System.out.println("Starting Server");
-        Server server = new Server();
-        int port = 3000;
-        try {
-            port = Integer.parseInt(args[0]);
-        } catch (Exception e) {
-            // can ignore, will either be index out of bounds or type mismatch
-            // will default to the defined value prior to the try/catch
-        }
-        server.start(port);
-        System.out.println("Server Stopped");
-    }
-}
-
-package Module4.Part3;
-
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.Socket;
-
-/**
- * A server-side representation of a single client
- */
-public class ServerThread extends Thread {
-    private Socket client;
-    private boolean isRunning = false;
-    private ObjectOutputStream out;// exposed here for send()
-    private Server server;// ref to our server so we can call methods on it
-    // more easily
-
-    private void info(String message) {
-        System.out.println(String.format("Thread[%s]: %s", getId(), message));
-    }
-
-    public ServerThread(Socket myClient, Server server) {
-        // info("Thread created");
-        info("Choose any number between 1 to 10 :");
-        // get communication channels to single client
-        this.client = myClient;
-        this.server = server;
-
-    }
-
-    public void disconnect() {
-        info("Thread being disconnected by server");
-        isRunning = false;
-        cleanup();
-    }
-
-    public boolean send(String message) {
-        // added a boolean so we can see if the send was successful
-        try {
-            out.writeObject(message);
-            return true;
-        } catch (IOException e) {
-            info("Error sending message to client (most likely disconnected)");
-            // comment this out to inspect the stack trace
-            // e.printStackTrace();
-            cleanup();
-            return false;
-        }
-    }
-
-    @Override
-    public void run() {
-        info("Thread starting");
-        try (ObjectOutputStream out = new ObjectOutputStream(client.getOutputStream());
-                ObjectInputStream in = new ObjectInputStream(client.getInputStream());) {
-            this.out = out;
-            isRunning = true;
-            String fromClient;
-            while (isRunning && // flag to let us easily control the loop
-                    (fromClient = (String) in.readObject()) != null // reads an object from inputStream (null would
-                                                                    // likely mean a disconnect)
-            ) {
-
-                // info("Received from client: " + fromClient);
-                if (fromClient <= 10 && fromClient >= 1)
-                    info("Congratulation, you guess the number");
-                else
-                    info("You did't guess the number, try again");
-                server.broadcast(fromClient, this.getId());
-            } // close while loop
-        } catch (Exception e) {
-            // happens when client disconnects
-            e.printStackTrace();
-            info("Client disconnected");
-        } finally {
-            isRunning = false;
-            info("Exited thread loop. Cleaning up connection");
-            cleanup();
-        }
-    }
-
-    private void cleanup() {
-        info("Thread cleanup() start");
-        try {
-            client.close();
-        } catch (IOException e) {
-            info("Client already closed");
-        }
-        info("Thread cleanup() complete");
-    }
-}
+<table><tr><td> <em>Assignment: </em> IT114 - Sockets Part 1 - 3</td></tr>
+<tr><td> <em>Student: </em> Mohamed Saad (mts6)</td></tr>
+<tr><td> <em>Generated: </em> 5/5/2023 11:17:48 PM</td></tr>
+<tr><td> <em>Grading Link: </em> <a rel="noreferrer noopener" href="https://learn.ethereallab.app/homework/IT114-006-S23/it114-sockets-part-1-3/grade/mts6" target="_blank">Grading</a></td></tr></table>
+<table><tr><td> <em>Instructions: </em> <ol><li>Create a new branch for this assignment</li><li>Go through the socket lessons and get each part implemented (parts 1-3)</li><ol><li>You'll probably want to put them into their own separate folders/packages (i.e., Part1, Part2, Part3) These are for your reference</li><li>Part 3, below, is what's necessary for this HW</li><li><a href="https://github.com/MattToegel/IT114/tree/Module4/Module4/Part3">https://github.com/MattToegel/IT114/tree/Module4/Module4/Part3</a><br></li></ol><li>Create a new folder called Part3HW</li><li>Create an empty m4_submission.md file in Part3HW (or skip this step and download the file at the end)</li><ol><li>Add/commit/push the branch</li><li>Create a pull request to main and keep it open</li></ol><li>Copy the the Part3 code into this new folder (Part3HW)</li><li>Git add/commit all of the sample code and the Part3HW code</li><li>Implement <b>two </b>of the following <b>server-side</b> activities for all connected clients (majority of the logic should be processed server-side and broadcasted/sent to all clients if/when applicable)</li><ol><li>Simple number guesser where all clients can attempt to guess while the game is active</li><ol><li>Have a start command that activates the game allowing guesses to be interpreted</li><li>Have a stop command that deactivates the game, guesses will be treated as regular messages</li><li>Have a guess command that include a value that is processed to see if it matches the hidden number (i.e., <i>guess 5</i>)</li><ol><li>Guess should only be considered when the game is active</li><li>The response should include who guessed, what they guessed, and whether or not it was correct (i.e., Bob guessed 5 but it was not correct)</li></ol><li>No need to implement complexities like strikes</li></ol><li>Coin toss command (random heads or tails)</li><ol><li>Command should be something logical like flip or toss or coin or similar</li><li>The result should mention <i>who</i>&nbsp;did <i>what</i>&nbsp;and got what <i>result</i>&nbsp;(i.e., Bob Flipped a coin and got heads)</li></ol><li>Dice roller given a command and text format of "roll #d#" (i.e., roll 2d6)</li><ol><li>Command should be in the format of roll #d# (i.e., roll 1d10)</li><li>The result should mention&nbsp;<i>who</i>&nbsp;did&nbsp;<i>what</i>&nbsp;and got what&nbsp;<i>result</i>&nbsp;(i.e., Bob rolled 1d10 and got 7)</li></ol><li>Math game (server outputs a basic equation, first person to guess it correctly gets congratulated and a new equation is given)</li><ol><li>Have a start command that activates the game allowing equaiton to be answered</li><li>Have a stop command that deactivates the game, answers will be treated as regular messages</li><li>Have an answer command that include a value that is processed to see if it matches the hidden number (i.e.,&nbsp;<i>answer 15</i>)<br></li><ol><li>The response should include who answered, what they answered, and whether or not it was correct (i.e., Bob answered 5 but it was not correct)</li></ol></ol><li>Private message (a client can send a message targetting another client where only the two can see the messages)</li><ol><li>Command can be pm, dm or an @ preceding the users name (clearly note which)</li><li>The server should properly check the target audience and send the response to the original sender and to the receiver</li><li>Alternatively (make note if you do this and show evidence) you can add support to private message multiple people at once. Evidence should show a larger number of clients than the target list of the private message to show it works. Note to grader: if this is accomplished add 0.5 to total final grade on Canvas.</li></ol><li>Message shuffler (randomizes the order of the characters of the given message)</li><ol><li>Command should be shuffle or randomize (clearly mention what you chose)</li><li>The message should be sent to all clients showing it's from the user but randomized</li><ol><li>Example: Bob types <i>command</i>&nbsp;hello and everyone recevies Bob: lleho</li></ol></ol></ol><li>Fill in the below deliverables</li><li>Save and generated the markdown or markdown file</li><li>Update the m4_submission.md file in the Part3HW folder</li><li>Add/commit/push your changes</li><li>Merge the pull request</li><li>From the M4-Sockets branch, navigate to your m4_submission.md file on github and copy the link</li><li>Submit the direct link to Canvas</li></ol></td></tr></table>
+<table><tr><td> <em>Deliverable 1: </em> Baseline </td></tr><tr><td><em>Status: </em> <img width="100" height="20" src="https://user-images.githubusercontent.com/54863474/211707773-e6aef7cb-d5b2-4053-bbb1-b09fc609041e.png"></td></tr>
+<tr><td><table><tr><td> <em>Sub-Task 1: </em> Add as many screenshots as necessary to show basic communication among 3 clients and 1 server</td></tr>
+<tr><td><table><tr><td><img width="768px" src="https://user-images.githubusercontent.com/106442036/236536108-165e0e50-d41d-4b6a-a30c-8d0d3d43770f.jpg"/></td></tr>
+<tr><td> <em>Caption:</em> <p><a href="https://user-images.githubusercontent.com/106442036/236536108-165e0e50-d41d-4b6a-a30c-8d0d3d43770f.jpg">https://user-images.githubusercontent.com/106442036/236536108-165e0e50-d41d-4b6a-a30c-8d0d3d43770f.jpg</a><br></p>
+</td></tr>
+<tr><td><img width="768px" src="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg"/></td></tr>
+<tr><td> <em>Caption:</em> <p><a href="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg">https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg</a><br></p>
+</td></tr>
+<tr><td><img width="768px" src="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg"/></td></tr>
+<tr><td> <em>Caption:</em> <p><a href="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg">https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg</a><br></p>
+</td></tr>
+</table></td></tr>
+</table></td></tr>
+<table><tr><td> <em>Deliverable 2: </em> Feature Implementation 1 </td></tr><tr><td><em>Status: </em> <img width="100" height="20" src="https://user-images.githubusercontent.com/54863474/211707834-bf5a5b13-ec36-4597-9741-aa830c195be2.png"></td></tr>
+<tr><td><table><tr><td> <em>Sub-Task 1: </em> What feature did you pick? Briefly explain how you implemented it</td></tr>
+<tr><td> <em>Response:</em> <p>(missing)</p><br></td></tr>
+<tr><td> <em>Sub-Task 2: </em> Add screenshot(s) showing the implemented feature working</td></tr>
+<tr><td><table><tr><td><img width="768px" src="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg"/></td></tr>
+<tr><td> <em>Caption:</em> <p><a href="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg">https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg</a><br></p>
+</td></tr>
+</table></td></tr>
+<tr><td> <em>Sub-Task 3: </em> Add screenshot(s) of related code changes to highlight the new logic</td></tr>
+<tr><td><table><tr><td><img width="768px" src="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg"/></td></tr>
+<tr><td> <em>Caption:</em> <p><a href="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg">https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg</a><br></p>
+</td></tr>
+</table></td></tr>
+</table></td></tr>
+<table><tr><td> <em>Deliverable 3: </em> Feature Implementation 2 </td></tr><tr><td><em>Status: </em> <img width="100" height="20" src="https://user-images.githubusercontent.com/54863474/211707834-bf5a5b13-ec36-4597-9741-aa830c195be2.png"></td></tr>
+<tr><td><table><tr><td> <em>Sub-Task 1: </em> What feature did you pick? Briefly explain how you implemented it</td></tr>
+<tr><td> <em>Response:</em> <p>(missing)</p><br></td></tr>
+<tr><td> <em>Sub-Task 2: </em> Add screenshot(s) showing the implemented feature working</td></tr>
+<tr><td><table><tr><td><img width="768px" src="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg"/></td></tr>
+<tr><td> <em>Caption:</em> <p><a href="https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg">https://user-images.githubusercontent.com/106442036/236536267-3e6b5480-1030-4c6f-a431-80943d4f5473.jpg</a><br></p>
+</td></tr>
+</table></td></tr>
+<tr><td> <em>Sub-Task 3: </em> Add screenshot(s) of related code changes to highlight the new logic</td></tr>
+<tr><td><table><tr><td>Missing Image</td></tr>
+<tr><td> <em>Caption:</em> (missing)</td></tr>
+</table></td></tr>
+</table></td></tr>
+<table><tr><td> <em>Deliverable 4: </em> Misc </td></tr><tr><td><em>Status: </em> <img width="100" height="20" src="https://user-images.githubusercontent.com/54863474/211707795-a9c94a71-7871-4572-bfae-ad636f8f8474.png"></td></tr>
+<tr><td><table><tr><td> <em>Sub-Task 1: </em> Did you have an issues and how did you resolve them? If no issues, what did you learn during this assignment that you found interesting?</td></tr>
+<tr><td> <em>Response:</em> <p>(missing)</p><br></td></tr>
+<tr><td> <em>Sub-Task 2: </em> Pull request link</td></tr>
+<tr><td>Not provided</td></tr>
+</table></td></tr>
+<table><tr><td><em>Grading Link: </em><a rel="noreferrer noopener" href="https://learn.ethereallab.app/homework/IT114-006-S23/it114-sockets-part-1-3/grade/mts6" target="_blank">Grading</a></td></tr></table>
