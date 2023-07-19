@@ -5,7 +5,11 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class Client {
 
@@ -17,7 +21,8 @@ public class Client {
     boolean isRunning = false;
     private Thread inputThread;
     private Thread fromServerThread;
-
+    static long clientId=-1;
+    
     public Client() {
         System.out.println("");
     }
@@ -48,7 +53,7 @@ public class Client {
             out = new ObjectOutputStream(server.getOutputStream());
             // channel to listen to server
             in = new ObjectInputStream(server.getInputStream());
-            System.out.println("Client connected");
+            ClientInterface.appendLog("Client connected");
             listenForServerMessage();
         } catch (UnknownHostException e) {
             e.printStackTrace();
@@ -108,42 +113,88 @@ public class Client {
         return false;
     }
 
-    private void listenForKeyboard() {
-        inputThread = new Thread() {
+    
+    // Flag to control the input thread's execution
+    private boolean isInputThreadRunning = false;
+    // Object to synchronize the input thread and the "Send" button click
+    public static Object inputLock = new Object();
+
+    public void listenForKeyboard() {
+    if (!isInputThreadRunning) {
+    	inputThread = new Thread() {
             @Override
             public void run() {
-                System.out.println("Listening for input");
-                try (Scanner si = new Scanner(System.in);) {
+            	ClientInterface.appendLog("Listening for input");
+            	
+                try  {
                     String line = "";
                     isRunning = true;
+                    isInputThreadRunning = true;
                     while (isRunning) {
+                    	
+                    	ClientInterface.appendLog("Waiting for input");
+                    	
+                    	 synchronized (inputLock) {
+                             inputLock.wait();
+                        }
+                    	 
                         try {
-                            System.out.println("Waiting for input");
-                            line = si.nextLine();
-                            if (!processCommand(line)) {
+                        	
+                            line = ClientInterface.cmdTxt.getText().trim();
+                            ClientInterface.cmdTxt.setText("");
+                            if ( line!= "" && !processCommand(line)) {
                                 if (isConnected()) {
                                     out.writeObject(line);
 
                                 } else {
-                                    System.out.println("Not connected to server");
+                                	ClientInterface.appendLog("Not connected to server");
                                 }
                             }
                         } catch (Exception e) {
-                            System.out.println("Connection dropped");
+                        	ClientInterface.appendLog("Connection dropped");
                             break;
                         }
                     }
-                    System.out.println("Exited loop");
+                    ClientInterface.appendLog("Exited loop");
                 } catch (Exception e) {
                     e.printStackTrace();
                 } finally {
                     close();
+                    isInputThreadRunning = false;
                 }
             }
         };
         inputThread.start();
     }
+    }
 
+    public void sendMuteMessage(long muterId, long mutedId) {
+        try {
+            if (isConnected()) {
+                String message = "Muted-" + muterId + "-" + mutedId;
+                out.writeObject(message);
+            } else {
+                ClientInterface.appendLog("Not connected to server");
+            }
+        } catch (IOException e) {
+            ClientInterface.appendLog("Error sending muted message: " + e.getMessage());
+        }
+    }
+    
+    public void sendUnMuteMessage(long unmuterId, long unmutedId) {
+        try {
+            if (isConnected()) {
+                String message = "Unmuted-" + unmuterId + "-" + unmutedId;
+                out.writeObject(message);
+            } else {
+                ClientInterface.appendLog("Not connected to server");
+            }
+        } catch (IOException e) {
+            ClientInterface.appendLog("Error sending unmute message: " + e.getMessage());
+        }
+    }
+    
+    
     private void listenForServerMessage() {
         fromServerThread = new Thread() {
             @Override
@@ -155,19 +206,45 @@ public class Client {
                     while (!server.isClosed() && !server.isInputShutdown()
                             && (fromServer = (String) in.readObject().toString()) != null) {
 
-                        System.out.println(fromServer);
+                    	if (fromServer.startsWith("ID:")) {
+                            // Extract and store the client's ID
+                            String idStr = fromServer.substring("ID:".length());
+                            clientId = Long.parseLong(idStr);
+                            ClientInterface.appendLog("Received client ID from server: " + clientId);
+                            continue;
+                        }
+                    	
+                    	if (fromServer.startsWith("ClientList:")) {
+                            // Extract and handle the client list
+                            String clientListStr = fromServer.substring("ClientList:".length());
+                            handleClientList(clientListStr);
+                            continue;
+                        }
+                    	
+                    	long muterId = extractMuterId(fromServer);
+                    	if(muterId==clientId) {
+                    		continue;
+                    	}
+                    	
+                    	long mutedId = extractMutedId(fromServer);
+                    	if(mutedId==clientId) {
+                    		continue;
+                    	}
+                    	
+                    	ClientInterface.appendLog(fromServer);
+                    	
                     }
-                    System.out.println("Loop exited");
+                    ClientInterface.appendLog("Loop exited");
                 } catch (Exception e) {
                     e.printStackTrace();
                     if (!server.isClosed()) {
-                        System.out.println("Server closed connection");
+                    	ClientInterface.appendLog("Server closed connection");
                     } else {
-                        System.out.println("Connection closed");
+                    	ClientInterface.appendLog("Connection closed");
                     }
                 } finally {
                     close();
-                    System.out.println("Stopped listening to server input");
+                    ClientInterface.appendLog("Stopped listening to server input");
                 }
             }
         };
@@ -175,59 +252,81 @@ public class Client {
 
     }
 
+    private void handleClientList(String clientListStr) {
+        String[] clientIdsStr = clientListStr.split(",");
+        List<Long> clientIds = new ArrayList<>();
+        for (String idStr : clientIdsStr) {
+        	idStr = idStr.replaceAll("[\\[\\]]", "");
+        	clientIds.add(Long.parseLong(idStr.trim()));
+        }
+        ClientInterface.appendClient(clientIds);
+
+    }
+    
     public void start() throws IOException {
-        listenForKeyboard();
+    	listenForKeyboard();
     }
 
     private void close() {
         try {
             inputThread.interrupt();
         } catch (Exception e) {
-            System.out.println("Error interrupting input");
+        	ClientInterface.appendLog("Error interrupting input");
             e.printStackTrace();
         }
         try {
             fromServerThread.interrupt();
         } catch (Exception e) {
-            System.out.println("Error interrupting listener");
+        	ClientInterface.appendLog("Error interrupting listener");
             e.printStackTrace();
         }
         try {
-            System.out.println("Closing output stream");
+        	ClientInterface.appendLog("Closing output stream");
             out.close();
         } catch (NullPointerException ne) {
-            System.out.println("Server was never opened so this exception is ok");
+        	ClientInterface.appendLog("Server was never opened so this exception is ok");
         } catch (Exception e) {
             e.printStackTrace();
         }
         try {
-            System.out.println("Closing input stream");
+        	ClientInterface.appendLog("Closing input stream");
             in.close();
         } catch (NullPointerException ne) {
-            System.out.println("Server was never opened so this exception is ok");
+        	ClientInterface.appendLog("Server was never opened so this exception is ok");
         } catch (Exception e) {
             e.printStackTrace();
         }
         try {
-            System.out.println("Closing connection");
+        	ClientInterface.appendLog("Closing connection");
             server.close();
-            System.out.println("Closed socket");
+            ClientInterface.appendLog("Closed socket");
         } catch (IOException e) {
             e.printStackTrace();
         } catch (NullPointerException ne) {
-            System.out.println("Server was never opened so this exception is ok");
+        	ClientInterface.appendLog("Server was never opened so this exception is ok");
         }
     }
 
-    public static void main(String[] args) {
-        Client client = new Client();
-
-        try {
-            // if start is private, it's valid here since this main is part of the class
-            client.start();
-        } catch (IOException e) {
-            e.printStackTrace();
+    private static long extractMuterId(String message) {
+        Pattern pattern = Pattern.compile("Client\\[(\\d+)\\]");
+        Matcher matcher = pattern.matcher(message);
+        if (matcher.find()) {
+            String muterIdStr = matcher.group(1);
+            return Long.parseLong(muterIdStr);
         }
+        return -1; // If no muterId is found in the message
+    }
+    
+    private static long extractMutedId(String message) {
+        Pattern pattern = Pattern.compile("Client\\[(\\d+)\\] has muted Client\\[(\\d+)\\]");
+        Pattern pattern2 = Pattern.compile("Client\\[(\\d+)\\] has unmuted Client\\[(\\d+)\\]");
+        Matcher matcher = pattern.matcher(message);
+        Matcher matcher2 = pattern.matcher(message);
+        if (matcher.find() || matcher2.find()) {
+            String mutedIdStr = matcher.group(2);
+            return Long.parseLong(mutedIdStr);
+        }
+        return -1; // If no Id is found in the message
     }
 
 }
